@@ -270,6 +270,13 @@
       <label for="height">模型高度</label>
       <input id="height" type="text" placeholder="例如 80cm">
     </div>
+    <div class="field" id="qualityField">
+      <label>品質</label>
+      <div class="segments" id="quality">
+        <button type="button" data-value="fast">快<small>約 1 分鐘</small></button>
+        <button type="button" data-value="fine">精細<small>多 20-30 秒・形狀細節多啲</small></button>
+      </div>
+    </div>
     <div class="field">
       <label>精細度</label>
       <div class="segments" id="faces">
@@ -383,6 +390,7 @@
     $('keyBox').hidden = engine !== 'meshy';
     $('colorsField').hidden = engine === 'meshy';  // Meshy keeps the real photo texture
     $('lightingField').hidden = engine === 'meshy';
+    $('qualityField').hidden = engine === 'meshy';  // Meshy picks its own quality
   }
 
   function currentEngine() {
@@ -430,6 +438,7 @@
       $('removeBackground').checked = data.removeBackground;
       $('removeLighting').checked = data.removeLighting;
       setSegment('place', data.place);
+      setSegment('quality', data.quality);
       setEngine(data.engine);
       $('currentVersion').textContent = data.version;
       if (data.latestVersion) app.updateAvailable(data.latestVersion);
@@ -548,6 +557,7 @@
       removeBackground: $('removeBackground').checked,
       removeLighting: $('removeLighting').checked,
       place: segmentValue('place'),
+      quality: segmentValue('quality'),
       meshyKey: $('meshyKey').value,
       rememberKey: $('rememberKey').checked,
     }));

@@ -15,7 +15,7 @@ module PhotoTo3D
     DOWNLOAD_PAGE = 'https://chilldim.site/'.freeze
 
     @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true, remove_lighting: true,
-                  place: 'mouse' }
+                  place: 'mouse', quality: 'fast' }
     @latest_version = nil
 
     def self.show
@@ -70,6 +70,7 @@ module PhotoTo3D
         removeBackground: @settings[:remove_background],
         removeLighting: @settings[:remove_lighting],
         place: @settings[:place],
+        quality: @settings[:quality],
         meshyKeySaved: !saved_key.empty?,
         version: VERSION,
         latestVersion: @latest_version
@@ -153,7 +154,8 @@ module PhotoTo3D
         colors: input['colors'].to_i.clamp(1, 64),
         remove_background: input['removeBackground'] ? true : false,
         remove_lighting: input['removeLighting'] ? true : false,
-        place: input['place'] == 'origin' ? 'origin' : 'mouse'
+        place: input['place'] == 'origin' ? 'origin' : 'mouse',
+        quality: input['quality'] == 'fine' ? 'fine' : 'fast'
       }
       PhotoTo3D.start_job(@settings.merge(photo: @photo, meshy_key: key), self)
       call('started', height.to_s)

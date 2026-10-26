@@ -9,6 +9,7 @@ extension turns into SketchUp faces.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -32,6 +33,18 @@ os.environ.setdefault("U2NET_HOME", os.path.join(HOME, "cache", "rembg"))
 ENGINES = ("hunyuan", "triposr", "meshy")
 STEPS = 5
 
+# "fast" is the distilled turbo model; "fine" is the full model with more
+# steps and a finer shape grid, a few times slower.
+QUALITIES = ("fast", "fine")
+HUNYUAN_REPO = "tencent/Hunyuan3D-2mini"
+HUNYUAN_MODELS = {"fast": "hunyuan3d-dit-v2-mini-turbo", "fine": "hunyuan3d-dit-v2-mini"}
+HUNYUAN_VAE = "hunyuan3d-vae-v2-mini-turbo"  # FlashVDM's fast shape decoder
+HUNYUAN_SETTINGS = {
+    "fast": {"num_inference_steps": 5, "octree_resolution": 380},
+    "fine": {"num_inference_steps": 50, "octree_resolution": 512},
+}
+TRIPOSR_RESOLUTION = {"fast": 256, "fine": 384}
+
 
 class Status:
     """Writes "step|total|message" to a file the extension shows in SketchUp."""
@@ -46,29 +59,79 @@ class Status:
                 f.write(f"{step}|{STEPS}|{message}")
 
 
-def load_hunyuan():
+def download_once(repo, patterns, folder, name):
+    """Downloads AI files into a plain folder, only the first time.
+
+    A plain folder instead of the Hugging Face cache, whose links need Windows
+    Developer Mode and can fail part way through. The marker file means later
+    runs don't need the internet.
+    """
+    marker = os.path.join(folder, f".downloaded-{name}")
+    if os.path.exists(marker):
+        return
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(repo, allow_patterns=patterns, local_dir=folder)
+    with open(marker, "w") as f:
+        f.write(repo)
+
+
+def download_hunyuan(quality):
+    """Puts the model files where hy3dgen looks first."""
+    folders = (HUNYUAN_MODELS[quality], HUNYUAN_VAE)
+    download_once(
+        HUNYUAN_REPO,
+        [f"{folder}/{name}" for folder in folders for name in ("config.yaml", "model.fp16.safetensors")],
+        os.path.join(os.environ["HY3DGEN_MODELS"], HUNYUAN_REPO),
+        quality,
+    )
+
+
+@contextlib.contextmanager
+def no_random_init():
+    """Skip filling new layers with random numbers, since the file's weights replace them right after.
+
+    Building Hunyuan3D otherwise spends about 17 seconds on random numbers
+    that are never used.
+    """
+    import torch
+
+    names = ("uniform_", "normal_", "trunc_normal_", "kaiming_uniform_", "kaiming_normal_",
+             "xavier_uniform_", "xavier_normal_", "constant_", "zeros_", "ones_", "orthogonal_")
+    saved = {name: getattr(torch.nn.init, name) for name in names}
+    try:
+        for name in names:
+            setattr(torch.nn.init, name, lambda tensor, *args, **kwargs: tensor)
+        yield
+    finally:
+        for name, function in saved.items():
+            setattr(torch.nn.init, name, function)
+
+
+def load_hunyuan(quality):
     import torch
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     if not torch.cuda.is_available():
         raise RuntimeError("Hunyuan3D 需要 NVIDIA 顯示卡。請改用 TripoSR。")
-    pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-        "tencent/Hunyuan3D-2mini",
-        subfolder="hunyuan3d-dit-v2-mini-turbo",
-        use_safetensors=False,
-        device="cuda",
-    )
+    download_hunyuan(quality)
+    # The shape model and image encoder load every weight strictly from the
+    # file. The shape decoder doesn't, but enable_flashvdm swaps it for the
+    # turbo decoder, which loads normally.
+    with no_random_init():
+        pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            HUNYUAN_REPO,
+            subfolder=HUNYUAN_MODELS[quality],
+            use_safetensors=True,
+            device="cuda",
+        )
     pipeline.enable_flashvdm(topk_mode="merge")
     return pipeline
 
 
 def download_delight():
-    from huggingface_hub import snapshot_download
-
-    # A plain folder instead of the Hugging Face cache, whose links need
-    # Windows Developer Mode and can fail part way through.
     folder = os.path.join(HOME, "cache", "delight")
-    snapshot_download("tencent/Hunyuan3D-2", allow_patterns=["hunyuan3d-delight-v2-0/*"], local_dir=folder)
+    download_once("tencent/Hunyuan3D-2", ["hunyuan3d-delight-v2-0/*"], folder, "delight")
     return os.path.join(folder, "hunyuan3d-delight-v2-0")
 
 
@@ -185,17 +248,16 @@ def on_gray(cutout):
     return Image.fromarray((pixels * 255.0).astype(np.uint8))
 
 
-def make_hunyuan(pipeline, cutout):
+def make_hunyuan(pipeline, cutout, quality):
     import torch
 
     with torch.no_grad():
         return pipeline(
             image=cutout,
-            num_inference_steps=5,
-            octree_resolution=380,
             num_chunks=20000,
             generator=torch.manual_seed(12345),
             output_type="trimesh",
+            **HUNYUAN_SETTINGS[quality],
         )[0]
 
 
@@ -209,14 +271,19 @@ def make_triposr(model, cutout, device, resolution):
 
 def drop_floating_bits(mesh):
     """Remove small loose pieces that the AI sometimes leaves around the object."""
+    import numpy as np
     import trimesh
 
-    parts = mesh.split(only_watertight=False)
-    if len(parts) <= 1:
-        return mesh
-    biggest = max(len(p.faces) for p in parts)
-    kept = [p for p in parts if len(p.faces) >= biggest * 0.02]
-    return trimesh.util.concatenate(kept)
+    # Label the pieces instead of splitting them into meshes: Hunyuan3D leaves
+    # hundreds of thousands of loose triangles, and making a mesh of each one
+    # took over half a minute.
+    labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    sizes = np.bincount(labels)
+    keep = sizes[labels] >= sizes.max() * 0.02
+    if not keep.all():
+        mesh.update_faces(keep)
+        mesh.remove_unreferenced_vertices()
+    return mesh
 
 
 def simplify(mesh, target_faces):
@@ -462,7 +529,7 @@ def run(args, status):
     if args.download_only:
         load_triposr(device)
         if torch.cuda.is_available():
-            load_hunyuan()
+            load_hunyuan("fast")  # the fine model downloads the first time it is used
             download_delight()
         status(STEPS, f"AI files are ready. Using: {device}")
         return
@@ -487,14 +554,20 @@ def run(args, status):
         status(2, "去除相片嘅光影（第一次要下載 AI）")
         colors_from = remove_lighting(cutout)
 
-    status(3, "載入 AI，建立 3D 形狀")
+    if args.quality == "fine":
+        first_time = args.engine == "hunyuan" and not os.path.isdir(
+            os.path.join(os.environ["HY3DGEN_MODELS"], HUNYUAN_REPO, HUNYUAN_MODELS["fine"]))
+        status(3, "精細模式：建立 3D 形狀" + ("（第一次要下載約 4 GB）" if first_time else ""))
+    else:
+        status(3, "載入 AI，建立 3D 形狀")
     if args.engine == "hunyuan":
-        engine = load_hunyuan()
-        mesh = make_hunyuan(engine, cutout)
+        engine = load_hunyuan(args.quality)
+        mesh = make_hunyuan(engine, cutout, args.quality)
     else:
         # TripoSR takes its colors from the same photo it builds the shape from.
         engine = load_triposr(device)
-        mesh = make_triposr(engine, colors_from, device, args.resolution)
+        resolution = args.resolution or TRIPOSR_RESOLUTION[args.quality]
+        mesh = make_triposr(engine, colors_from, device, resolution)
     del engine
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -532,7 +605,9 @@ def main():
     parser.add_argument("--engine", choices=ENGINES, default="hunyuan")
     parser.add_argument("--faces", type=int, default=20000, help="max triangles")
     parser.add_argument("--colors", type=int, default=32, help="number of colors")
-    parser.add_argument("--resolution", type=int, default=256, help="TripoSR shape detail grid")
+    parser.add_argument("--quality", choices=QUALITIES, default="fast",
+                        help="fine: slower, more shape detail (local engines)")
+    parser.add_argument("--resolution", type=int, help="TripoSR shape detail grid (default from --quality)")
     parser.add_argument("--keep-background", action="store_true")
     parser.add_argument("--remove-lighting", action="store_true",
                         help="take highlights, shadows and colored light out of the photo first (local engines)")
