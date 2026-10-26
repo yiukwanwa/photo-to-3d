@@ -34,8 +34,9 @@ module PhotoTo3D
   end
 
   # Starts the AI in the background. `settings` keys: photo, engine, height
-  # (Length), faces, colors, remove_background, remove_lighting, meshy_key. Progress, success
-  # and failure are reported to `listener` (see Window).
+  # (Length), faces, colors, remove_background, remove_lighting, place ('mouse'
+  # or 'origin'), meshy_key. Progress, success and failure are reported to
+  # `listener` (see Window).
   def self.start_job(settings, listener)
     job_dir = File.join(JOBS, Time.now.strftime('%Y%m%d-%H%M%S'))
     FileUtils.mkdir_p(job_dir)
@@ -45,6 +46,7 @@ module PhotoTo3D
       log: File.join(job_dir, 'log.txt'),
       name: File.basename(settings[:photo], '.*'),
       height: settings[:height],
+      place: settings[:place],
       listener: listener,
       started: Time.now
     }
@@ -99,8 +101,8 @@ module PhotoTo3D
     finish_job
     if File.exist?(job[:out])
       Sketchup.status_text = '相片變3D：加入 SketchUp 緊...'
-      faces = build(JSON.parse(File.read(job[:out], encoding: 'UTF-8')), job[:name], job[:height])
-      job[:listener].succeeded(faces, seconds)
+      faces = build(JSON.parse(File.read(job[:out], encoding: 'UTF-8')), job[:name], job[:height], job[:place])
+      job[:listener].succeeded(faces, seconds, job[:place])
     else
       job[:listener].failed(failure_reason(job), job[:log])
     end
@@ -126,8 +128,10 @@ module PhotoTo3D
     'AI 程式停咗，但冇講原因。'
   end
 
-  # Adds the model as a component at the origin and returns its face count.
-  def self.build(data, name, height)
+  # Adds the model as a component and returns its face count. With place
+  # 'mouse' the model follows the mouse until the user clicks; otherwise it
+  # goes at the origin.
+  def self.build(data, name, height, place)
     model = Sketchup.active_model
     build_height = [height, MIN_BUILD_HEIGHT].max
     points = data['vertices'].map { |x, y, z| Geom::Point3d.new(x * build_height, y * build_height, z * build_height) }
@@ -141,16 +145,59 @@ module PhotoTo3D
             end
 
     scale = Geom::Transformation.scaling(height.to_f / build_height.to_f)
-    instance = model.active_entities.add_instance(definition, scale)
-    model.commit_operation
-
-    model.selection.clear
-    model.selection.add(instance)
-    model.active_view.zoom(instance)
+    if place == 'mouse'
+      # place_component can't scale, so the scaled model rides in a wrapper
+      # component that Placer unwraps once it has been placed.
+      wrapper = model.definitions.add("相片變3D - #{name}（擺放中）")
+      wrapper.entities.add_instance(definition, scale)
+      model.commit_operation
+      Placer.watch(model, wrapper)
+      Sketchup.focus if Sketchup.respond_to?(:focus)
+      model.place_component(wrapper)
+    else
+      instance = model.active_entities.add_instance(definition, scale)
+      model.commit_operation
+      model.selection.clear
+      model.selection.add(instance)
+      model.active_view.zoom(instance)
+    end
     faces
   rescue StandardError
     model.abort_operation
     raise
+  end
+
+  # Replaces the placed wrapper with the model inside it, so the result is the
+  # same single component as when it goes at the origin.
+  class Placer < Sketchup::ModelObserver
+    def self.watch(model, wrapper)
+      # Only the newest model waits to be placed.
+      model.remove_observer(@current) if @current
+      @current = new(wrapper)
+      model.add_observer(@current)
+    end
+
+    def initialize(wrapper)
+      @wrapper = wrapper
+    end
+
+    def onPlaceComponent(instance)
+      return unless instance.valid? && instance.definition == @wrapper
+
+      model = instance.model
+      model.remove_observer(self)
+      # Change the model after SketchUp has finished placing it.
+      UI.start_timer(0, false) do
+        next unless instance.valid?
+
+        model.start_operation('Photo to 3D', true, false, true) # undoes with the placement
+        placed = instance.explode.grep(Sketchup::ComponentInstance).first
+        model.definitions.remove(@wrapper) if @wrapper.valid? && @wrapper.instances.empty?
+        model.commit_operation
+        model.selection.clear
+        model.selection.add(placed) if placed
+      end
+    end
   end
 
   # Local engines: one plain-color material per palette color.

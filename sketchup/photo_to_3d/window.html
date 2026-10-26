@@ -178,6 +178,9 @@
   summary { cursor: pointer; font-weight: 700; color: var(--text); }
   details ul { margin: 8px 0 0; padding-left: 18px; }
   footer { padding: 10px 16px; border-top: 1px solid var(--line); background: #fff; text-align: center; flex-shrink: 0; }
+  .update { background: linear-gradient(135deg, #fff4ec, #ffe9dd); border: 1px solid #ffd2bd; display: grid; gap: 6px; }
+  .update .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .update button.primary { width: auto; padding: 6px 14px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -195,6 +198,17 @@
 </header>
 
 <main>
+  <div id="update" class="card update" hidden>
+    <div class="row">
+      <span>🎁 有新版本 <b id="updateVersion"></b><small class="muted">（你用緊 <span id="currentVersion"></span>）</small></span>
+      <span class="actions">
+        <button id="getUpdate" class="primary" type="button">下載</button>
+        <button id="hideUpdate" class="ghost" type="button" title="今次唔理">✕</button>
+      </span>
+    </div>
+    <small class="muted">下載咗之後，喺 Extension Manager 撳「Install Extension」揀新嘅 .rbz 就得。</small>
+  </div>
+
   <div id="notInstalled" class="card install" hidden>
     <b>第一次用？要先安裝 AI</b>
     <p>會自動下載大約 11 GB（Python、AI 模型），需時 20-40 分鐘。<br>安裝視窗完成之後，撳「再檢查」。</p>
@@ -273,6 +287,13 @@
         <button type="button" data-value="16">16</button>
         <button type="button" data-value="32">32</button>
         <button type="button" data-value="64">64</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>擺放位置</label>
+      <div class="segments" id="place">
+        <button type="button" data-value="mouse">跟住滑鼠<small>撳一下放低</small></button>
+        <button type="button" data-value="origin">原點<small>自動放喺 0,0,0</small></button>
       </div>
     </div>
     <label class="switch">
@@ -384,7 +405,10 @@
       setSegment('colors', data.colors);
       $('removeBackground').checked = data.removeBackground;
       $('removeLighting').checked = data.removeLighting;
+      setSegment('place', data.place);
       setEngine(data.engine);
+      $('currentVersion').textContent = data.version;
+      if (data.latestVersion) app.updateAvailable(data.latestVersion);
       $('meshyKey').value = '';
       $('meshyKey').placeholder = data.meshyKeySaved ? '已經儲存咗 API key（留空就用返佢）' : '貼上你嘅 Meshy API key';
       $('forgetKey').hidden = !data.meshyKeySaved;
@@ -427,8 +451,10 @@
     },
     succeeded(r) {
       busy = false;
-      $('resultText').textContent = r.faces.toLocaleString() + ' 個面，用咗 ' + r.seconds +
-        ' 秒。模型已經揀咗喺原點，用「移動」工具擺去你想要嘅位置。';
+      $('resultText').textContent = r.faces.toLocaleString() + ' 個面，用咗 ' + r.seconds + ' 秒。' +
+        (r.place === 'mouse'
+          ? '模型跟住你個滑鼠，喺畫面撳一下就放低。撳 Esc 就唔放（之後可以喺 Components → In Model 搵返）。'
+          : '模型已經揀咗喺原點，用「移動」工具擺去你想要嘅位置。');
       $('result').hidden = false;
       refresh();
       reveal('result');
@@ -455,7 +481,13 @@
     error(text) {
       showMessage(text);
     },
+    updateAvailable(version) {
+      if (updateHidden) return;
+      $('updateVersion').textContent = version;
+      $('update').hidden = false;
+    },
   };
+  let updateHidden = false;
 
   $('drop').addEventListener('click', () => { if (!busy) sketchup.choosePhoto(); });
   $('drop').addEventListener('dragover', (e) => { e.preventDefault(); if (!busy) $('drop').classList.add('over'); });
@@ -491,10 +523,13 @@
       colors: segmentValue('colors'),
       removeBackground: $('removeBackground').checked,
       removeLighting: $('removeLighting').checked,
+      place: segmentValue('place'),
       meshyKey: $('meshyKey').value,
       rememberKey: $('rememberKey').checked,
     }));
   });
+  $('getUpdate').addEventListener('click', () => sketchup.getUpdate());
+  $('hideUpdate').addEventListener('click', () => { updateHidden = true; $('update').hidden = true; });
   $('installAi').addEventListener('click', () => sketchup.installAi());
   $('recheck').addEventListener('click', () => sketchup.recheck());
   $('getKey').addEventListener('click', () => sketchup.openUrl('https://www.meshy.ai/api'));

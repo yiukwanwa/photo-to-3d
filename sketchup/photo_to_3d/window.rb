@@ -11,7 +11,12 @@ module PhotoTo3D
 
     @dialog = nil
     @photo = nil
-    @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true, remove_lighting: true }
+    RELEASES_API = 'https://api.github.com/repos/yiukwanwa/photo-to-3d/releases/latest'.freeze
+    DOWNLOAD_PAGE = 'https://chilldim.site/'.freeze
+
+    @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true, remove_lighting: true,
+                  place: 'mouse' }
+    @latest_version = nil
 
     def self.show
       @dialog ||= create_dialog
@@ -26,7 +31,7 @@ module PhotoTo3D
         style: UI::HtmlDialog::STYLE_DIALOG
       )
       dialog.set_file(File.join(PLUGIN_DIR, 'window.html'))
-      dialog.add_action_callback('ready') { send_init }
+      dialog.add_action_callback('ready') { send_init; check_for_update }
       dialog.add_action_callback('choosePhoto') { choose_photo }
       dialog.add_action_callback('droppedPhoto') { |_, name, data_url| dropped_photo(name, data_url) }
       dialog.add_action_callback('make') { |_, settings| make(settings) }
@@ -37,6 +42,7 @@ module PhotoTo3D
       dialog.add_action_callback('recheck') { send_init }
       dialog.add_action_callback('forgetKey') { Sketchup.write_default(PREFS, 'meshy_key', ''); send_init }
       dialog.add_action_callback('openUrl') { |_, url| UI.openURL(url) if url.to_s.start_with?('https://') }
+      dialog.add_action_callback('getUpdate') { UI.openURL(DOWNLOAD_PAGE) }
       dialog
     end
 
@@ -52,8 +58,35 @@ module PhotoTo3D
         colors: @settings[:colors],
         removeBackground: @settings[:remove_background],
         removeLighting: @settings[:remove_lighting],
-        meshyKeySaved: !saved_key.empty?
+        place: @settings[:place],
+        meshyKeySaved: !saved_key.empty?,
+        version: VERSION,
+        latestVersion: @latest_version
       })
+    end
+
+    # Asks GitHub once per SketchUp session whether a newer version is out.
+    def self.check_for_update
+      return if @update_request
+
+      @update_request = Sketchup::Http::Request.new(RELEASES_API, Sketchup::Http::GET)
+      @update_request.headers = { 'Accept' => 'application/vnd.github+json', 'User-Agent' => 'PhotoTo3D' }
+      @update_request.start do |_, response|
+        next unless response.status_code == 200
+
+        latest = JSON.parse(response.body)['tag_name'].to_s.sub(/\Av/, '')
+        if newer?(latest, VERSION)
+          @latest_version = latest
+          call('updateAvailable', latest)
+        end
+      rescue StandardError
+        nil # no internet or GitHub is down: just don't show the notice
+      end
+    end
+
+    def self.newer?(latest, current)
+      parts = ->(version) { version.split('.').map(&:to_i) }
+      latest.match?(/\A\d+(\.\d+)*\z/) && (parts.call(latest) <=> parts.call(current)) == 1
     end
 
     def self.saved_key
@@ -108,7 +141,8 @@ module PhotoTo3D
         faces: input['faces'].to_i.clamp(1000, 300_000),
         colors: input['colors'].to_i.clamp(1, 64),
         remove_background: input['removeBackground'] ? true : false,
-        remove_lighting: input['removeLighting'] ? true : false
+        remove_lighting: input['removeLighting'] ? true : false,
+        place: input['place'] == 'origin' ? 'origin' : 'mouse'
       }
       PhotoTo3D.start_job(@settings.merge(photo: @photo, meshy_key: key), self)
       call('started', height.to_s)
@@ -119,8 +153,8 @@ module PhotoTo3D
       call('progress', { step: step, total: total, message: message, seconds: seconds })
     end
 
-    def self.succeeded(faces, seconds)
-      call('succeeded', { faces: faces, seconds: seconds })
+    def self.succeeded(faces, seconds, place)
+      call('succeeded', { faces: faces, seconds: seconds, place: place })
     end
 
     def self.failed(reason, log)
