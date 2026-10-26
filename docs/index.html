@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>相片變3D — SketchUp 擴充功能</title>
+<meta name="description" content="影一張物件相，AI 幫你變成 3D 模型，直接放入 SketchUp。兩個免費本機 AI 引擎，加一個雲端引擎。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23ff6a3d'/%3E%3Cpath d='M12 4 5 8v8l7 4 7-4V8z' fill='none' stroke='white' stroke-width='1.8' stroke-linejoin='round'/%3E%3Cpath d='M5 8l7 4 7-4M12 12v8' fill='none' stroke='white' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+HK:wght@400;500;700;900&family=Sora:wght@600;800&display=swap">
+<style>
+  /* Layout: dark "studio" hero with the photo-to-model demo, then light content sections on a 1080px column. */
+  :root {
+    --ink: #1c2030; --ink-2: #2a2f45; --ember: #6b2f2a;
+    --accent: #ff6a3d; --accent-2: #ff9a5a; --accent-soft: #fff0e8;
+    --bg: #f5f6fa; --card: #ffffff; --text: #1c2030; --muted: #646d82; --line: #e2e5ee;
+    --ok: #18935a; --ok-soft: #e4f5ec; --cloud: #3456c9; --cloud-soft: #e9efff;
+    --display: "Sora", "Noto Sans HK", system-ui, sans-serif;
+    --body: "Noto Sans HK", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141c; --card: #1b1e2a; --text: #eef0f6; --muted: #9aa2b6; --line: #2a2e3d;
+      --accent-soft: #3a2219; --ok-soft: #14301f; --cloud-soft: #1b2546; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12141c; --card: #1b1e2a; --text: #eef0f6; --muted: #9aa2b6; --line: #2a2e3d;
+    --accent-soft: #3a2219; --ok-soft: #14301f; --cloud-soft: #1b2546; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 var(--body); -webkit-font-smoothing: antialiased; }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; }
+  .wrap {
+    max-width: 1080px; margin: 0 auto;
+    padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+  }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  h2 { font-size: clamp(26px, 4vw, 34px); font-weight: 900; letter-spacing: .5px; }
+  .eyebrow { font: 700 13px var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
+  section { padding-block: 72px; }
+  section > .wrap > header { display: grid; gap: 8px; margin-bottom: 32px; max-width: 640px; }
+  section > .wrap > header p { margin: 0; color: var(--muted); }
+
+  /* ---------- hero ---------- */
+  .hero {
+    background: radial-gradient(900px 500px at 85% -10%, rgba(255,120,70,.35), transparent 60%),
+                linear-gradient(135deg, var(--ink) 0%, var(--ink-2) 50%, var(--ember) 100%);
+    color: #fff; padding-block: env(safe-area-inset-top, 0px) 80px; overflow: hidden;
+  }
+  nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 20px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; font-size: 18px; text-decoration: none; }
+  .logo {
+    width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 6px 18px rgba(255,106,61,.45);
+  }
+  .logo svg { width: 20px; height: 20px; }
+  .pill { font: 700 11px var(--display); letter-spacing: 1px; padding: 2px 9px; border-radius: 99px; background: rgba(255,255,255,.14); }
+  nav .links { display: flex; gap: 22px; font-size: 14px; }
+  nav .links a { text-decoration: none; opacity: .8; }
+  nav .links a:hover { opacity: 1; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 48px; align-items: center; padding-top: 40px; }
+  .hero h1 { font-size: clamp(34px, 5.2vw, 54px); line-height: 1.2; font-weight: 900; letter-spacing: 1px; }
+  .hero h1 em { white-space: nowrap; font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.lead { font-size: 18px; color: rgba(255,255,255,.78); margin: 20px 0 32px; max-width: 520px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px; text-decoration: none; border-radius: 14px;
+    padding: 15px 24px; font-weight: 700; font-size: 16px; transition: transform .12s, box-shadow .15s;
+  }
+  .btn svg { width: 20px; height: 20px; }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; box-shadow: 0 10px 26px rgba(255,106,61,.45); }
+  .btn.primary:hover { transform: translateY(-1px); box-shadow: 0 14px 32px rgba(255,106,61,.55); }
+  .btn.ghost { color: #fff; border: 1px solid rgba(255,255,255,.3); }
+  .btn.ghost:hover { background: rgba(255,255,255,.08); }
+  .btn:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  .meta { width: 100%; font-size: 13px; color: rgba(255,255,255,.6); font-variant-numeric: tabular-nums; }
+
+  .demo {
+    position: relative; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 24px; padding: 18px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+    backdrop-filter: blur(6px);
+  }
+  .demo figure { margin: 0; display: grid; gap: 8px; text-align: center; font-size: 13px; color: rgba(255,255,255,.7); }
+  .demo .photo { border-radius: 14px; background: #fff; aspect-ratio: 1; object-fit: contain; width: 100%; padding: 8px; }
+  .demo .model {
+    border-radius: 14px; aspect-ratio: 1; width: 100%; object-fit: contain;
+    background: repeating-conic-gradient(#f3f4f8 0% 25%, #fff 0% 50%) 50% / 20px 20px;
+  }
+  .demo .arrow { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); }
+  .demo .arrow svg { width: 18px; height: 18px; }
+  .demo .chip {
+    position: absolute; top: -12px; right: 18px; background: #fff; color: var(--ink); font-size: 12px; font-weight: 700;
+    padding: 4px 12px; border-radius: 99px; box-shadow: 0 6px 16px rgba(0,0,0,.25);
+  }
+
+  /* ---------- examples ---------- */
+  .examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .example { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .example img { aspect-ratio: 1; object-fit: contain; width: 100%; border-radius: 12px; background: #fff; }
+  .example .m { background: repeating-conic-gradient(#f3f4f8 0% 25%, #fff 0% 50%) 50% / 18px 18px; }
+  .example p { grid-column: 1 / -1; margin: 0; font-size: 14px; color: var(--muted); }
+  .example p b { color: var(--text); }
+
+  /* ---------- engines ---------- */
+  .engines { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+  .engine { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+  .engine.best { border: 2px solid var(--accent); box-shadow: 0 12px 30px rgba(255,106,61,.15); }
+  .engine h3 { font: 800 20px var(--display); }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge { font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 99px; }
+  .badge.free { background: var(--ok-soft); color: var(--ok); }
+  .badge.cloud { background: var(--cloud-soft); color: var(--cloud); }
+  .badge.hot { background: var(--accent); color: #fff; }
+  .engine p { margin: 0; color: var(--muted); font-size: 15px; }
+  .engine dl { margin: auto 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .engine dt { color: var(--muted); }
+  .engine dd { margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ---------- steps ---------- */
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
+  .steps li { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px 20px; counter-increment: step; position: relative; }
+  .steps li::before {
+    content: counter(step); display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent); font: 800 16px var(--display); margin-bottom: 12px;
+  }
+  .steps h3 { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  .steps p { margin: 0; font-size: 14px; color: var(--muted); }
+  .steps code, .faq code { font-size: 13px; background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 6px; }
+  .alt { margin-top: 18px; font-size: 14px; color: var(--muted); }
+
+  /* ---------- requirements + faq ---------- */
+  .two { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 40px; align-items: start; }
+  .req { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 8px 22px; }
+  .req div { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding-block: 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .req div:last-child { border-bottom: 0; }
+  .req span { color: var(--muted); }
+  .faq { display: grid; gap: 10px; }
+  .faq details { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; }
+  .faq summary { cursor: pointer; font-weight: 700; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  .faq summary::after { content: "+"; color: var(--accent); font: 800 20px var(--display); line-height: 1; }
+  .faq details[open] summary::after { content: "−"; }
+  .faq summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+  .faq p { margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+
+  .bottom-cta { background: linear-gradient(135deg, var(--ink) 0%, var(--ember) 100%); color: #fff; border-radius: 28px; padding: 44px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px; }
+  .bottom-cta h2 { color: #fff; }
+  .bottom-cta p { margin: 6px 0 0; color: rgba(255,255,255,.7); }
+  footer { padding-block: 32px calc(32px + env(safe-area-inset-bottom, 0px)); color: var(--muted); font-size: 13px; }
+  footer p { margin: 4px 0; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .two { grid-template-columns: 1fr; }
+    .engines { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 600px) {
+    nav .links { display: none; }
+    .examples, .steps { grid-template-columns: 1fr; }
+    section { padding-block: 52px; }
+    .bottom-cta { padding: 28px; }
+    .req div { grid-template-columns: 90px 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <nav>
+      <a class="brand" href="#">
+        <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg></span>
+        相片變3D <span class="pill">BETA</span>
+      </a>
+      <div class="links">
+        <a href="#engines">AI 引擎</a>
+        <a href="#install">安裝</a>
+        <a href="#faq">常見問題</a>
+      </div>
+    </nav>
+
+    <div class="hero-grid">
+      <div>
+        <h1>影一張相，<br><em>變一個 3D 模型。</em></h1>
+        <p class="lead">SketchUp 擴充功能。揀一張物件相，AI 幫你整出有顏色嘅 3D 模型，直接放入你嘅 SketchUp 檔案。兩個引擎免費喺你部電腦運行，一個雲端引擎出最似相嘅效果。</p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/yiukwanwa/photo-to-3d/releases/latest/download/PhotoTo3D.rbz">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            下載 PhotoTo3D.rbz
+          </a>
+          <a class="btn ghost" href="#install">睇安裝步驟</a>
+          <div class="meta">版本 1.1.0 Beta · 24 KB · Windows · SketchUp 2021 或更新</div>
+        </div>
+      </div>
+
+      <div class="demo" aria-label="由相片到 3D 模型示範">
+        <span class="chip">AI 15–30 秒</span>
+        <figure><img class="photo" src="img/chair-photo.webp" alt="一張木櫈嘅相片" width="240" height="240"><figcaption>你張相</figcaption></figure>
+        <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        <figure><img class="model" src="img/chair-model.webp" alt="AI 整出嚟嘅 3D 木櫈模型" width="240" height="240"><figcaption>SketchUp 3D 模型</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <header>
+      <span class="eyebrow">Examples</span>
+      <h2>真係由一張相整出嚟</h2>
+      <p>以下模型由免費本機引擎整出，顏色取自原本張相。每個模型大約 2 萬個面，可以喺 SketchUp 隨便轉嚟睇。</p>
+    </header>
+    <div class="examples">
+      <div class="example">
+        <img src="img/chair-photo.webp" alt="木櫈相片" width="240" height="240" loading="lazy">
+        <img class="m" src="img/chair-model.webp" alt="木櫈 3D 模型" width="240" height="240" loading="lazy">
+        <p><b>木櫈</b> · 椅背、坐墊同四隻腳都分得好清楚</p>
+      </div>
+      <div class="example">
+        <img src="img/robot-photo.webp" alt="機械人相片" width="240" height="240" loading="lazy">
+        <img class="m" src="img/robot-model.webp" alt="機械人 3D 模型" width="240" height="240" loading="lazy">
+        <p><b>機械人公仔</b> · 背面係 AI 估出嚟，顏色跟最近嘅部分</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="engines">
+  <div class="wrap">
+    <header>
+      <span class="eyebrow">AI Engines</span>
+      <h2>三個 AI 引擎，隨你揀</h2>
+      <p>本機引擎完全離線，相片唔會離開你部電腦。想要最好效果，就用雲端嘅 Meshy。</p>
+    </header>
+    <div class="engines">
+      <article class="engine">
+        <div class="badges"><span class="badge free">免費</span><span class="badge free">本機</span></div>
+        <h3>Hunyuan3D-2 mini</h3>
+        <p>騰訊開源 AI。形狀清晰、細節多，顏色直接由你張相投射上去。</p>
+        <dl><dt>速度</dt><dd>大約 10–30 秒</dd><dt>收費</dt><dd>免費</dd><dt>需要</dt><dd>NVIDIA 顯示卡</dd></dl>
+      </article>
+      <article class="engine">
+        <div class="badges"><span class="badge free">免費</span><span class="badge free">本機</span></div>
+        <h3>TripoSR</h3>
+        <p>最快嘅引擎。形狀圓滑啲，AI 會估埋背面嘅顏色。冇顯示卡都用得，只係慢啲。</p>
+        <dl><dt>速度</dt><dd>大約 10–20 秒</dd><dt>收費</dt><dd>免費</dd><dt>需要</dt><dd>任何電腦</dd></dl>
+      </article>
+      <article class="engine best">
+        <div class="badges"><span class="badge cloud">雲端</span><span class="badge hot">最似相</span></div>
+        <h3>Meshy 7.1</h3>
+        <p>細節最多、表面最平滑，仲有真實相片貼圖。用你自己嘅 Meshy API key。</p>
+        <dl><dt>速度</dt><dd>大約 1–3 分鐘</dd><dt>收費</dt><dd>每個約 30 credits</dd><dt>需要</dt><dd>Meshy 付費計劃</dd></dl>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <header>
+      <span class="eyebrow">Install</span>
+      <h2>四步裝好</h2>
+      <p>擴充功能好細，但 AI 要第一次用嗰陣先下載（大約 7 GB）。</p>
+    </header>
+    <ol class="steps">
+      <li><h3>下載</h3><p>撳上面個掣，下載 <code>PhotoTo3D.rbz</code>。</p></li>
+      <li><h3>安裝擴充功能</h3><p>SketchUp → Extensions → Extension Manager → Install Extension，揀個 .rbz。</p></li>
+      <li><h3>安裝 AI</h3><p>撳工具列「相片變3D」，再撳「安裝 AI」。會自動裝晒，需時 20–40 分鐘。</p></li>
+      <li><h3>開始用</h3><p>裝完撳「再檢查」，揀相，撳「開始變 3D」，模型就會出現喺原點。</p></li>
+    </ol>
+    <p class="alt">安裝 AI 會下載 Python 3.11、PyTorch 同 AI 模型，全部放喺 <code>%LOCALAPPDATA%\PhotoTo3D</code>。</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap two">
+    <div>
+      <header style="display:grid;gap:8px;margin-bottom:24px">
+        <span class="eyebrow">Requirements</span>
+        <h2>系統要求</h2>
+      </header>
+      <div class="req">
+        <div><span>系統</span>Windows 10 / 11（64 位元）</div>
+        <div><span>SketchUp</span>2021 或更新</div>
+        <div><span>顯示卡</span>NVIDIA 6 GB 或以上，例如 RTX 3060 / 3060 Ti</div>
+        <div><span>記憶體</span>16 GB RAM</div>
+        <div><span>硬碟</span>大約 15 GB</div>
+        <div><span>網絡</span>安裝 AI 同用 Meshy 時要上網</div>
+      </div>
+    </div>
+    <div>
+      <header style="display:grid;gap:8px;margin-bottom:24px">
+        <span class="eyebrow">FAQ</span>
+        <h2>常見問題</h2>
+      </header>
+      <div class="faq">
+        <details><summary>咩相效果最好？</summary><p>每張相淨係影一件嘢，例如櫈、花樽、公仔、鞋。成件嘢要入晒鏡，背景簡單、光線充足，由斜上少少嘅角度影。成座建築物或者房間，就用 SketchUp 嘅 Match Photo。</p></details>
+        <details><summary>本機引擎會唔會上載我張相？</summary><p>唔會。Hunyuan3D-2 同 TripoSR 完全喺你部電腦運行。只有揀 Meshy 嗰陣，相片先會上載去 Meshy 伺服器。</p></details>
+        <details><summary>Meshy API key 喺邊度攞？</summary><p>喺 meshy.ai 開戶口，升級付費計劃，然後喺 API 設定頁建立 key。貼入相片變3D 視窗就用得，可以揀記住喺呢部電腦。</p></details>
+        <details><summary>點解叫 Beta？</summary><p>AI 部分已經喺 RTX 3060 測試過，SketchUp 入面嘅視窗仲喺測試緊。有問題可以撳視窗嘅「睇記錄」，每次都有詳細記錄。</p></details>
+        <details><summary>可唔可以商業用途？</summary><p>TripoSR 係 MIT 授權。Hunyuan3D-2 mini 跟騰訊社群授權，可以免費用，但唔可以喺歐盟、英國同南韓使用；每月用戶超過 100 萬嘅公司要另外申請。Meshy 跟佢嘅服務條款。</p></details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="bottom-cta">
+      <div>
+        <h2>試下將你張相變 3D</h2>
+        <p>免費下載，兩個本機引擎永久免費。</p>
+      </div>
+      <a class="btn primary" href="https://github.com/yiukwanwa/photo-to-3d/releases/latest/download/PhotoTo3D.rbz">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+        下載 PhotoTo3D.rbz
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>相片變3D · 由 yiukwanwa 製作</p>
+    <p>使用 TripoSR（MIT）、Hunyuan3D-2 mini（Tencent Hunyuan 3D 2.0 Community License）同 Meshy API。SketchUp 係 Trimble Inc. 嘅商標，本擴充功能同 Trimble 冇關係。</p>
+  </div>
+</footer>
+
+</body>
+</html>

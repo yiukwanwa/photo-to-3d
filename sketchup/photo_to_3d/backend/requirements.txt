@@ -1,0 +1,18 @@
+# PyTorch is installed separately by install.ps1 (CUDA build).
+numpy<2
+omegaconf==2.3.0
+einops==0.7.0
+transformers==4.46.3
+diffusers==0.31.0
+accelerate==1.1.1
+trimesh==4.4.9
+pymeshlab
+opencv-python-headless
+networkx
+scipy
+scikit-image==0.22.0
+fast-simplification>=0.1.7
+rembg[cpu]>=2.0.50,<2.1
+onnxruntime
+imageio
+Pillow>=10,<12

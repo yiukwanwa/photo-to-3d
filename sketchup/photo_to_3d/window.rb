@@ -1,0 +1,135 @@
+# encoding: utf-8
+require 'base64'
+
+module PhotoTo3D
+  # The Photo to 3D window: pick a photo, choose settings, watch progress.
+  module Window
+    MAX_DROP_BYTES = 30 * 1024 * 1024
+    PHOTO_TYPES = %w[.jpg .jpeg .png .webp .bmp].freeze
+    ENGINES = %w[hunyuan triposr meshy].freeze
+    PREFS = 'PhotoTo3D'
+
+    @dialog = nil
+    @photo = nil
+    @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true }
+
+    def self.show
+      @dialog ||= create_dialog
+      @dialog.visible? ? @dialog.bring_to_front : @dialog.show
+    end
+
+    def self.create_dialog
+      dialog = UI::HtmlDialog.new(
+        dialog_title: '相片變3D',
+        preferences_key: 'PhotoTo3D.Window',
+        width: 440, height: 720, min_width: 380, min_height: 560,
+        style: UI::HtmlDialog::STYLE_DIALOG
+      )
+      dialog.set_file(File.join(PLUGIN_DIR, 'window.html'))
+      dialog.add_action_callback('ready') { send_init }
+      dialog.add_action_callback('choosePhoto') { choose_photo }
+      dialog.add_action_callback('droppedPhoto') { |_, name, data_url| dropped_photo(name, data_url) }
+      dialog.add_action_callback('make') { |_, settings| make(settings) }
+      dialog.add_action_callback('cancel') { PhotoTo3D.cancel_job; call('cancelled') }
+      dialog.add_action_callback('openFolder') { PhotoTo3D.open_work_folder }
+      dialog.add_action_callback('openLog') { |_, path| UI.openURL("file:///#{path}") }
+      dialog.add_action_callback('installAi') { PhotoTo3D.run_installer }
+      dialog.add_action_callback('recheck') { send_init }
+      dialog.add_action_callback('forgetKey') { Sketchup.write_default(PREFS, 'meshy_key', ''); send_init }
+      dialog.add_action_callback('openUrl') { |_, url| UI.openURL(url) if url.to_s.start_with?('https://') }
+      dialog
+    end
+
+    def self.send_init
+      height = @settings[:height] || 1.m
+      call('init', {
+        installed: PhotoTo3D.installed?,
+        busy: PhotoTo3D.busy?,
+        photo: @photo,
+        height: height.to_s,
+        engine: @settings[:engine],
+        faces: @settings[:faces],
+        colors: @settings[:colors],
+        removeBackground: @settings[:remove_background],
+        meshyKeySaved: !saved_key.empty?
+      })
+    end
+
+    def self.saved_key
+      Sketchup.read_default(PREFS, 'meshy_key', '').to_s
+    end
+
+    def self.choose_photo
+      path = UI.openpanel('揀一張物件相', '', 'Photos|*.jpg;*.jpeg;*.png;*.webp;*.bmp||')
+      set_photo(path.tr('\\', '/')) if path
+    end
+
+    # A photo dragged into the window arrives as file data, not a path, so save it.
+    def self.dropped_photo(name, data_url)
+      extension = File.extname(name.to_s).downcase
+      return call('error', '請用 JPG、PNG、WEBP 或者 BMP 相。') unless PHOTO_TYPES.include?(extension)
+
+      bytes = Base64.decode64(data_url.to_s.sub(/\Adata:[^,]*,/, ''))
+      return call('error', '張相太大喇（超過 30 MB）。') if bytes.bytesize > MAX_DROP_BYTES
+
+      folder = File.join(JOBS, 'photos')
+      FileUtils.mkdir_p(folder)
+      path = File.join(folder, "#{Time.now.strftime('%Y%m%d-%H%M%S')}-#{File.basename(name).gsub(/[^\w.\-]/, '_')}")
+      File.binwrite(path, bytes)
+      set_photo(path)
+    end
+
+    def self.set_photo(path)
+      @photo = path
+      call('setPhoto', path)
+    end
+
+    def self.make(json)
+      input = JSON.parse(json)
+      height = begin
+        input['height'].to_s.to_l
+      rescue ArgumentError
+        return call('error', "\"#{input['height']}\" 唔係 SketchUp 識嘅尺寸。試下 80cm 或者 2'。")
+      end
+      return call('error', '模型高度要大過 0。') if height <= 0
+      return call('error', '請先揀相。') unless @photo && File.exist?(@photo)
+      return call('error', '而家整緊另一個模型，請等等。') if PhotoTo3D.busy?
+
+      engine = ENGINES.include?(input['engine']) ? input['engine'] : 'hunyuan'
+      key = input['meshyKey'].to_s.strip
+      key = saved_key if key.empty?
+      return call('error', '用 Meshy 要先輸入你嘅 Meshy API key。') if engine == 'meshy' && key.empty?
+
+      Sketchup.write_default(PREFS, 'meshy_key', key) if engine == 'meshy' && input['rememberKey']
+      @settings = {
+        engine: engine,
+        height: height,
+        faces: input['faces'].to_i.clamp(1000, 300_000),
+        colors: input['colors'].to_i.clamp(1, 64),
+        remove_background: input['removeBackground'] ? true : false
+      }
+      PhotoTo3D.start_job(@settings.merge(photo: @photo, meshy_key: key), self)
+      call('started', height.to_s)
+    end
+
+    # Listener methods called by PhotoTo3D while a job runs.
+    def self.progress(step, total, message, seconds)
+      call('progress', { step: step, total: total, message: message, seconds: seconds })
+    end
+
+    def self.succeeded(faces, seconds)
+      call('succeeded', { faces: faces, seconds: seconds })
+    end
+
+    def self.failed(reason, log)
+      call('failed', { reason: reason, log: log })
+      UI.messagebox("唔好意思，整唔到模型。\n\n#{reason}") unless @dialog&.visible?
+    end
+
+    def self.call(function, argument = nil)
+      return unless @dialog&.visible?
+
+      @dialog.execute_script("app.#{function}(#{JSON.generate(argument)})")
+    end
+  end
+end
