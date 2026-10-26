@@ -34,7 +34,7 @@ module PhotoTo3D
   end
 
   # Starts the AI in the background. `settings` keys: photo, engine, height
-  # (Length), faces, colors, remove_background, meshy_key. Progress, success
+  # (Length), faces, colors, remove_background, remove_lighting, meshy_key. Progress, success
   # and failure are reported to `listener` (see Window).
   def self.start_job(settings, listener)
     job_dir = File.join(JOBS, Time.now.strftime('%Y%m%d-%H%M%S'))
@@ -52,6 +52,7 @@ module PhotoTo3D
     command = [PYTHON, SCRIPT, '--image', settings[:photo], '--out', job[:out], '--status', job[:status],
                '--engine', settings[:engine], '--faces', settings[:faces].to_s, '--colors', settings[:colors].to_s]
     command << '--keep-background' unless settings[:remove_background]
+    command << '--remove-lighting' if settings[:remove_lighting]
     # The API key goes in the environment so it never shows up in the command line or log.
     env = { 'PHOTOTO3D_MESHY_KEY' => settings[:engine] == 'meshy' ? settings[:meshy_key].to_s : '' }
     job[:pid] = Process.spawn(env, *command, [:out, :err] => [job[:log], 'w'])

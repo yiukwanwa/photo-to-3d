@@ -197,7 +197,7 @@
 <main>
   <div id="notInstalled" class="card install" hidden>
     <b>第一次用？要先安裝 AI</b>
-    <p>會自動下載大約 7 GB（Python、AI 模型），需時 20-40 分鐘。<br>安裝視窗完成之後，撳「再檢查」。</p>
+    <p>會自動下載大約 11 GB（Python、AI 模型），需時 20-40 分鐘。<br>安裝視窗完成之後，撳「再檢查」。</p>
     <div class="actions">
       <button id="installAi" class="primary" type="button">安裝 AI</button>
       <button id="recheck" class="ghost" type="button">再檢查</button>
@@ -279,6 +279,10 @@
       <span>自動去背景</span>
       <input id="removeBackground" type="checkbox"><span class="track"></span>
     </label>
+    <label class="switch" id="lightingField" title="燈光、反光同陰影唔會當咗係物件嘅顏色。每次慢 10 秒左右。">
+      <span>去除光影<small class="muted">（燈光、反光、陰影）</small></span>
+      <input id="removeLighting" type="checkbox"><span class="track"></span>
+    </label>
   </div>
 
   <div id="message" class="card bad" hidden></div>
@@ -305,6 +309,7 @@
       <li>每張相淨係影一件嘢：櫈、花樽、公仔、鞋、車。</li>
       <li>成件嘢要入晒鏡，唔好切咗邊。</li>
       <li>背景簡單、光線充足最好。</li>
+      <li>影燈飾最好熄燈、用白光或者日光影。</li>
       <li>由斜上少少、側少少嘅角度影。</li>
       <li>背面係 AI 估出嚟，所以冇咁準。</li>
       <li>成座建築物或者房間，請用 SketchUp 嘅 Match Photo。</li>
@@ -332,6 +337,7 @@
     });
     $('keyBox').hidden = engine !== 'meshy';
     $('colorsField').hidden = engine === 'meshy';  // Meshy keeps the real photo texture
+    $('lightingField').hidden = engine === 'meshy';
   }
 
   function currentEngine() {
@@ -377,6 +383,7 @@
       setSegment('faces', data.faces);
       setSegment('colors', data.colors);
       $('removeBackground').checked = data.removeBackground;
+      $('removeLighting').checked = data.removeLighting;
       setEngine(data.engine);
       $('meshyKey').value = '';
       $('meshyKey').placeholder = data.meshyKeySaved ? '已經儲存咗 API key（留空就用返佢）' : '貼上你嘅 Meshy API key';
@@ -483,6 +490,7 @@
       faces: segmentValue('faces'),
       colors: segmentValue('colors'),
       removeBackground: $('removeBackground').checked,
+      removeLighting: $('removeLighting').checked,
       meshyKey: $('meshyKey').value,
       rememberKey: $('rememberKey').checked,
     }));

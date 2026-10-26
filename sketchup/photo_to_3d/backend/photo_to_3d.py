@@ -62,6 +62,86 @@ def load_hunyuan():
     return pipeline
 
 
+def download_delight():
+    from huggingface_hub import snapshot_download
+
+    # A plain folder instead of the Hugging Face cache, whose links need
+    # Windows Developer Mode and can fail part way through.
+    folder = os.path.join(HOME, "cache", "delight")
+    snapshot_download("tencent/Hunyuan3D-2", allow_patterns=["hunyuan3d-delight-v2-0/*"], local_dir=folder)
+    return os.path.join(folder, "hunyuan3d-delight-v2-0")
+
+
+def load_delight():
+    """Hunyuan3D's light remover: repaints a photo without highlights, shadows or colored light."""
+    import torch
+    from diffusers import EulerAncestralDiscreteScheduler, StableDiffusionInstructPix2PixPipeline
+
+    pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
+        download_delight(), torch_dtype=torch.float16, safety_checker=None
+    )
+    pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config)
+    pipeline.set_progress_bar_config(disable=True)
+    return pipeline.to("cuda")
+
+
+def remove_lighting(cutout):
+    """Returns the cut-out photo with the lighting taken out, keeping its transparency.
+
+    Without this, yellow lamp light, glare and shadows in the photo get painted
+    onto the model as if they were the object's own colors.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    rgba = np.asarray(cutout.convert("RGBA"))
+    alpha = rgba[:, :, 3:4] / 255.0
+    # The light remover was trained on objects on a white background.
+    on_white = (rgba[:, :, :3] * alpha + 255 * (1 - alpha)).astype(np.uint8)
+    small = Image.fromarray(on_white).resize((512, 512), Image.LANCZOS)
+
+    pipeline = load_delight()
+    with torch.no_grad():
+        flat = pipeline(
+            prompt="",
+            image=small,
+            height=512,
+            width=512,
+            num_inference_steps=50,
+            image_guidance_scale=1.5,
+            guidance_scale=1.0,
+            generator=torch.manual_seed(42),
+        ).images[0]
+    del pipeline
+    torch.cuda.empty_cache()
+
+    flat = np.asarray(flat.resize(cutout.size, Image.LANCZOS)).astype(np.float32)
+    flat = match_colors(flat, on_white.astype(np.float32), rgba[:, :, 3] > 127)
+    return Image.fromarray(np.dstack([flat, rgba[:, :, 3]]), "RGBA")
+
+
+def match_colors(flat, photo, mask):
+    """Bring the overall colors back to the photo's.
+
+    The light remover also shifts colors (red gets redder, white goes beige).
+    Matching each channel's average and spread to the photo keeps the photo's
+    colors while the glare and glow stay removed. Same as Hunyuan3D's own fix.
+    """
+    import numpy as np
+
+    matched = np.empty_like(flat)
+    for c in range(3):
+        src, dst = flat[:, :, c][mask], photo[:, :, c][mask]
+        spread = dst.std() / max(src.std(), 1e-3)
+        matched[:, :, c] = (flat[:, :, c] - 0.95 * src.mean()) * spread + 0.95 * dst.mean()
+    matched = np.clip(matched, 0, 255)
+    # Keep the plain result when matching would move it further from the photo.
+    if ((flat - photo)[mask] ** 2).mean() < ((matched - photo)[mask] ** 2).mean():
+        matched = flat
+    return matched.astype(np.uint8)
+
+
 def load_triposr(device):
     from tsr.system import TSR
 
@@ -383,6 +463,7 @@ def run(args, status):
         load_triposr(device)
         if torch.cuda.is_available():
             load_hunyuan()
+            download_delight()
         status(STEPS, f"AI files are ready. Using: {device}")
         return
 
@@ -396,17 +477,24 @@ def run(args, status):
         status(STEPS, f"完成：{len(mesh.faces)} 個面")
         return
 
-    status(1, "載入 AI 緊（第一次會慢少少）")
-    engine = load_hunyuan() if args.engine == "hunyuan" else load_triposr(device)
-
     status(2, "將物件由相片剪出嚟")
     cutout = cut_out(args.image, args.keep_background, session)
 
-    status(3, "建立 3D 形狀")
+    # The colors come from a copy of the photo without its lighting. Hunyuan3D
+    # still builds the shape from the real photo, whose shading shows the form.
+    colors_from = cutout
+    if args.remove_lighting and torch.cuda.is_available():
+        status(2, "去除相片嘅光影（第一次要下載 AI）")
+        colors_from = remove_lighting(cutout)
+
+    status(3, "載入 AI，建立 3D 形狀")
     if args.engine == "hunyuan":
+        engine = load_hunyuan()
         mesh = make_hunyuan(engine, cutout)
     else:
-        mesh = make_triposr(engine, cutout, device, args.resolution)
+        # TripoSR takes its colors from the same photo it builds the shape from.
+        engine = load_triposr(device)
+        mesh = make_triposr(engine, colors_from, device, args.resolution)
     del engine
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -419,7 +507,7 @@ def run(args, status):
         mesh.invert()
     mesh = to_sketchup_space(mesh, args.engine)
     if args.engine == "hunyuan":
-        mesh = paint_from_photo(mesh, cutout)
+        mesh = paint_from_photo(mesh, colors_from)
     face_colors, palette = palette_colors(mesh, args.colors)
 
     write_result(args.out, {
@@ -446,6 +534,8 @@ def main():
     parser.add_argument("--colors", type=int, default=32, help="number of colors")
     parser.add_argument("--resolution", type=int, default=256, help="TripoSR shape detail grid")
     parser.add_argument("--keep-background", action="store_true")
+    parser.add_argument("--remove-lighting", action="store_true",
+                        help="take highlights, shadows and colored light out of the photo first (local engines)")
     parser.add_argument("--cpu", action="store_true", help="don't use the graphics card (TripoSR only)")
     parser.add_argument("--download-only", action="store_true",
                         help="only download the AI files, then exit")

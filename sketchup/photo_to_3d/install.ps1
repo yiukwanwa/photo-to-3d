@@ -83,7 +83,7 @@ function Add-ToSketchUp {
 
 $failed = $false
 try {
-    Write-Host '相片變3D：安裝 AI。要下載大約 7 GB，需時 20-40 分鐘。' -ForegroundColor Green
+    Write-Host '相片變3D：安裝 AI。要下載大約 11 GB，需時 20-40 分鐘。' -ForegroundColor Green
 
     Step '檢查顯示卡'
     if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
@@ -124,7 +124,7 @@ try {
     Get-Source $TripoSRZip (Join-Path $Target 'TripoSR') @('tsr', 'examples', 'LICENSE')
     Get-Source $HunyuanZip (Join-Path $Target 'Hunyuan3D-2') @('hy3dgen', 'LICENSE', 'NOTICE')
 
-    Step '下載 AI 模型（大約 4 GB，只係第一次）'
+    Step '下載 AI 模型（大約 8 GB，只係第一次）'
     Run $VenvPython (Join-Path $Source 'backend\photo_to_3d.py') --download-only
 
     if ($AddToSketchUp) {

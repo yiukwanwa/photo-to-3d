@@ -11,7 +11,7 @@ module PhotoTo3D
 
     @dialog = nil
     @photo = nil
-    @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true }
+    @settings = { engine: 'hunyuan', faces: 20000, colors: 32, remove_background: true, remove_lighting: true }
 
     def self.show
       @dialog ||= create_dialog
@@ -51,6 +51,7 @@ module PhotoTo3D
         faces: @settings[:faces],
         colors: @settings[:colors],
         removeBackground: @settings[:remove_background],
+        removeLighting: @settings[:remove_lighting],
         meshyKeySaved: !saved_key.empty?
       })
     end
@@ -106,7 +107,8 @@ module PhotoTo3D
         height: height,
         faces: input['faces'].to_i.clamp(1000, 300_000),
         colors: input['colors'].to_i.clamp(1, 64),
-        remove_background: input['removeBackground'] ? true : false
+        remove_background: input['removeBackground'] ? true : false,
+        remove_lighting: input['removeLighting'] ? true : false
       }
       PhotoTo3D.start_job(@settings.merge(photo: @photo, meshy_key: key), self)
       call('started', height.to_s)
