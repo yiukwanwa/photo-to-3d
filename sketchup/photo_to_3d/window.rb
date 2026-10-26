@@ -31,19 +31,30 @@ module PhotoTo3D
         style: UI::HtmlDialog::STYLE_DIALOG
       )
       dialog.set_file(File.join(PLUGIN_DIR, 'window.html'))
-      dialog.add_action_callback('ready') { send_init; check_for_update }
-      dialog.add_action_callback('choosePhoto') { choose_photo }
-      dialog.add_action_callback('droppedPhoto') { |_, name, data_url| dropped_photo(name, data_url) }
-      dialog.add_action_callback('make') { |_, settings| make(settings) }
-      dialog.add_action_callback('cancel') { PhotoTo3D.cancel_job; call('cancelled') }
-      dialog.add_action_callback('openFolder') { PhotoTo3D.open_work_folder }
-      dialog.add_action_callback('openLog') { |_, path| UI.openURL("file:///#{path}") }
-      dialog.add_action_callback('installAi') { PhotoTo3D.run_installer }
-      dialog.add_action_callback('recheck') { send_init }
-      dialog.add_action_callback('forgetKey') { Sketchup.write_default(PREFS, 'meshy_key', ''); send_init }
-      dialog.add_action_callback('openUrl') { |_, url| UI.openURL(url) if url.to_s.start_with?('https://') }
-      dialog.add_action_callback('getUpdate') { UI.openURL(DOWNLOAD_PAGE) }
+      on(dialog, 'ready') { send_init; check_for_update }
+      on(dialog, 'choosePhoto') { choose_photo }
+      on(dialog, 'droppedPhoto') { |name, data_url| dropped_photo(name, data_url) }
+      on(dialog, 'make') { |settings| make(settings) }
+      on(dialog, 'cancel') { PhotoTo3D.cancel_job; call('cancelled') }
+      on(dialog, 'openFolder') { PhotoTo3D.open_work_folder }
+      on(dialog, 'openLog') { |path| UI.openURL("file:///#{path}") }
+      on(dialog, 'installAi') { PhotoTo3D.run_installer }
+      on(dialog, 'recheck') { send_init }
+      on(dialog, 'forgetKey') { Sketchup.write_default(PREFS, 'meshy_key', ''); send_init }
+      on(dialog, 'openUrl') { |url| UI.openURL(url) if url.to_s.start_with?('https://') }
+      on(dialog, 'getUpdate') { UI.openURL(DOWNLOAD_PAGE) }
       dialog
+    end
+
+    # Registers a callback from the window. A Ruby error shows in the window
+    # (and the Ruby Console) instead of the button silently doing nothing.
+    def self.on(dialog, name, &block)
+      dialog.add_action_callback(name) do |_, *args|
+        block.call(*args)
+      rescue StandardError => error
+        puts "相片變3D #{name}: #{error.full_message}"
+        call('error', "相片變3D 出錯（#{name}）：#{error.message}")
+      end
     end
 
     def self.send_init

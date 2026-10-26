@@ -3,7 +3,7 @@ require 'sketchup.rb'
 require 'extensions.rb'
 
 module PhotoTo3D
-  VERSION = '1.3.0'.freeze unless defined?(VERSION)
+  VERSION = '1.3.1'.freeze unless defined?(VERSION)
 
   unless file_loaded?(__FILE__)
     extension = SketchupExtension.new('相片變3D (Photo to 3D)', 'photo_to_3d/main')

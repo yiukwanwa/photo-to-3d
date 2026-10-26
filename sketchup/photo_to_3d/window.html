@@ -341,6 +341,30 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
+
+  // Calls the Ruby side. Looks up SketchUp's `sketchup` object on every call
+  // instead of keeping a copy, since SketchUp may add it after this script runs.
+  // Opened in a normal browser (a preview without SketchUp), it only logs.
+  function hasSketchup() {
+    return window.sketchup != null;
+  }
+
+  function ruby(name, ...args) {
+    if (!hasSketchup()) {
+      console.log('sketchup.' + name, args);
+      return;
+    }
+    try {
+      window.sketchup[name](...args);
+    } catch (e) {
+      showMessage('相片變3D 出錯（' + name + '）：' + e.message + '。請重新開 SketchUp，再唔得就重新安裝擴充功能。');
+    }
+  }
+
+  // Show unexpected script errors in the window instead of silently doing nothing.
+  window.addEventListener('error', (e) => {
+    showMessage('相片變3D 出錯：' + (e.message || '未知錯誤') + '。請影低呢個訊息畀開發者。');
+  });
   let installed = true;
   let busy = false;
   let hasPhoto = false;
@@ -468,7 +492,7 @@
       reason.textContent = r.reason;
       const link = document.createElement('a');
       link.textContent = '睇記錄';
-      link.onclick = () => sketchup.openLog(r.log);
+      link.onclick = () => ruby('openLog', r.log);
       $('message').append(title, reason, link);
       $('message').hidden = false;
       refresh();
@@ -489,7 +513,7 @@
   };
   let updateHidden = false;
 
-  $('drop').addEventListener('click', () => { if (!busy) sketchup.choosePhoto(); });
+  $('drop').addEventListener('click', () => { if (!busy) ruby('choosePhoto'); });
   $('drop').addEventListener('dragover', (e) => { e.preventDefault(); if (!busy) $('drop').classList.add('over'); });
   $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
   $('drop').addEventListener('drop', (e) => {
@@ -498,7 +522,7 @@
     const file = e.dataTransfer.files[0];
     if (!file || busy) return;
     const reader = new FileReader();
-    reader.onload = () => sketchup.droppedPhoto(file.name, reader.result);
+    reader.onload = () => ruby('droppedPhoto', file.name, reader.result);
     reader.readAsDataURL(file);
   });
   document.addEventListener('dragover', (e) => e.preventDefault());
@@ -516,7 +540,7 @@
 
   $('make').addEventListener('click', () => {
     showMessage('');
-    sketchup.make(JSON.stringify({
+    ruby('make', JSON.stringify({
       engine: currentEngine(),
       height: $('height').value,
       faces: segmentValue('faces'),
@@ -528,20 +552,25 @@
       rememberKey: $('rememberKey').checked,
     }));
   });
-  $('getUpdate').addEventListener('click', () => sketchup.getUpdate());
+  $('getUpdate').addEventListener('click', () => ruby('getUpdate'));
   $('hideUpdate').addEventListener('click', () => { updateHidden = true; $('update').hidden = true; });
-  $('installAi').addEventListener('click', () => sketchup.installAi());
-  $('recheck').addEventListener('click', () => sketchup.recheck());
-  $('getKey').addEventListener('click', () => sketchup.openUrl('https://www.meshy.ai/api'));
-  $('forgetKey').addEventListener('click', () => sketchup.forgetKey());
-  $('cancel').addEventListener('click', () => sketchup.cancel());
-  $('openFolder').addEventListener('click', () => sketchup.openFolder());
+  $('installAi').addEventListener('click', () => ruby('installAi'));
+  $('recheck').addEventListener('click', () => ruby('recheck'));
+  $('getKey').addEventListener('click', () => ruby('openUrl', 'https://www.meshy.ai/api'));
+  $('forgetKey').addEventListener('click', () => ruby('forgetKey'));
+  $('cancel').addEventListener('click', () => ruby('cancel'));
+  $('openFolder').addEventListener('click', () => ruby('openFolder'));
 
-  // Lets the page be opened in a normal browser for a preview, without SketchUp.
-  if (typeof window.sketchup === 'undefined') {
-    window.sketchup = new Proxy({}, { get: (_, name) => (...args) => console.log('sketchup.' + name, args) });
-  }
-  document.addEventListener('DOMContentLoaded', () => sketchup.ready());
+  // SketchUp may add its `sketchup` object a moment after the page loads, so
+  // wait for it before asking for the settings (up to 5 seconds).
+  document.addEventListener('DOMContentLoaded', () => {
+    let tries = 0;
+    const ready = () => {
+      if (hasSketchup() || ++tries > 50) ruby('ready');
+      else setTimeout(ready, 100);
+    };
+    ready();
+  });
 </script>
 </body>
 </html>
